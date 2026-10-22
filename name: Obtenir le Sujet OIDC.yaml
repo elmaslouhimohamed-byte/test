@@ -1,0 +1,32 @@
+name: Obtenir le Sujet OIDC
+on:
+  workflow_dispatch: # Permet de lancer le script manuellement en 1 clic
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  recuperer-sujet:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Extraction du sujet
+      run: |
+        # 1. Récupération de la réponse brute de GitHub
+        RESPONSE=$(curl -s -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=api://AzureADTokenExchange")
+        
+        # 2. Vérification si la réponse contient bien un jeton
+        if ! echo "$RESPONSE" | jq -e '.value' > /dev/null; then
+          echo "❌ Erreur de GitHub OIDC. Réponse reçue :"
+          echo "$RESPONSE"
+          exit 1
+        fi
+        
+        # 3. Extraction et décodage
+        JWT=$(echo "$RESPONSE" | jq -r '.value')
+        SUBJECT=$(echo "$JWT" | cut -d'.' -f2 | base64 --decode | jq -r '.sub')
+        
+        echo "=========================================="
+        echo "VOTRE SUJET (SUBJECT) EST :"
+        echo "$SUBJECT"
+        echo "=========================================="
