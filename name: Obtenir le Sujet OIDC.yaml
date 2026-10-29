@@ -1,6 +1,6 @@
 name: Obtenir le Sujet OIDC
 on:
-  workflow_dispatch: # Permet de lancer le script manuellement en 1 clic
+  workflow_dispatch: # Permet de lancer le script manuellement en One clic
 
 permissions:
   id-token: write
