@@ -1,4 +1,4 @@
-name: Deploy to Azure with OIDC
+name: Deploy to Azure via OIDC
 
 on:
   push:
