@@ -15,7 +15,13 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-
+        
+      - name: Scan de Sécurité avec Checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          framework: terraform
+          soft_fail: false # 'false' pour bloquer le pipeline si une faille est trouvée
+      
       - name: Authenticate via Azure Entra ID OIDC
         uses: azure/login@v2
         with:
