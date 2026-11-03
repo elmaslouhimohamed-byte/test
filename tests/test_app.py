@@ -1,16 +1,17 @@
 
-- name: Install dependencies
-  run: |
-    python -m pip install --upgrade pip
-    pip install -r requirements.txt
-    pip install pytest
+from app.app import app
 
-- name: Check project files
-  run: |
-    pwd
-    ls -la
-    find . -maxdepth 3 -type f
+def test_home():
+    client = app.test_client()
+    response = client.get("/")
 
-- name: Run application tests
-  run: |
-    python -m pytest -v tests/
+    assert response.status_code == 200
+    assert response.json["status"] == "Running"
+
+
+def test_health():
+    client = app.test_client()
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json["status"] == "healthy"
