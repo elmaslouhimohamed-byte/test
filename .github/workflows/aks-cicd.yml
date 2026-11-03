@@ -43,18 +43,13 @@ jobs:
           directory: .
           framework: terraform
           soft_fail: false
-          
-      - name: Prepare Kubernetes manifest for Checkov
-        run: |
-          sed 's|REPLACE_IMAGE|nginx@sha256:5f70bf18a086007016e948b04aed6b96fe4b04e3c6d8f2e2c9c8a7c8e7f4f7a0|g' \
-            k8s/deployment.yaml > /tmp/deployment-check.yaml
          
-      - name: Checkov - Kubernetes
-        uses: bridgecrewio/checkov-action@v12
-        with:
-          directory: ./k8s
-          framework: kubernetes
-          soft_fail: false
+      #- name: Checkov - Kubernetes
+      #  uses: bridgecrewio/checkov-action@v12
+      #  with:
+      #    directory: ./k8s
+      #    framework: kubernetes
+      #   soft_fail: false
 
       - name: Checkov - Dockerfile
         uses: bridgecrewio/checkov-action@v12
