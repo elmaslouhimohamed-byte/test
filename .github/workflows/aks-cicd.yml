@@ -1,0 +1,125 @@
+
+name: Build and Deploy Application to AKS
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  ACR_NAME: acrdevsecops2026
+  ACR_LOGIN_SERVER: acrdevsecops2026.azurecr.io
+  IMAGE_NAME: flask-app
+  AKS_RESOURCE_GROUP: rg-terraform-infrastructure
+  AKS_CLUSTER_NAME: aks-devsecops
+  K8S_NAMESPACE: default
+
+jobs:
+  build-and-deploy:
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+
+      # 1. Checkout source code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Run application tests
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run tests
+        run: pytest
+
+      # 3. Build Docker image
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t $ACR_LOGIN_SERVER/$IMAGE_NAME:$GITHUB_SHA .
+
+      # 4. Scan Docker image
+      - name: Trivy Security Scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: acrdevsecops2026.azurecr.io/flask-app:${{ github.sha }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+
+      # 5. Login to Azure using OIDC
+      - name: Azure Login
+        if: github.event_name == 'push'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # 6. Login to ACR
+      - name: Login to ACR
+        if: github.event_name == 'push'
+        run: |
+          az acr login --name $ACR_NAME
+
+      # 7. Push Docker image to ACR
+      - name: Push Docker image
+        if: github.event_name == 'push'
+        run: |
+          docker push \
+            $ACR_LOGIN_SERVER/$IMAGE_NAME:$GITHUB_SHA
+
+      # 8. Connect to AKS
+      - name: Set AKS context
+        if: github.event_name == 'push'
+        uses: azure/aks-set-context@v5
+        with:
+          resource-group: ${{ env.AKS_RESOURCE_GROUP }}
+          cluster-name: ${{ env.AKS_CLUSTER_NAME }}
+          admin: 'false'
+          use-kubelogin: 'true'
+
+      # 9. Deploy Kubernetes manifests
+      - name: Deploy application to AKS
+        if: github.event_name == 'push'
+        run: |
+
+          IMAGE="$ACR_LOGIN_SERVER/$IMAGE_NAME:$GITHUB_SHA"
+
+          sed "s|REPLACE_IMAGE|$IMAGE|g" \
+            k8s/deployment.yaml | kubectl apply \
+            -n $K8S_NAMESPACE -f -
+
+          kubectl apply \
+            -n $K8S_NAMESPACE \
+            -f k8s/service.yaml
+
+      # 10. Verify deployment
+      - name: Verify AKS deployment
+        if: github.event_name == 'push'
+        run: |
+
+          kubectl rollout status deployment/flask-app \
+            -n $K8S_NAMESPACE \
+            --timeout=180s
+
+          kubectl get pods -n $K8S_NAMESPACE
+
+          kubectl get services -n $K8S_NAMESPACE
+
