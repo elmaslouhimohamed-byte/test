@@ -13,6 +13,8 @@ spec:
       labels:
         app: flask-app
     spec:
+      automountServiceAccountToken: false
+
       securityContext:
         seccompProfile:
           type: RuntimeDefault
