@@ -30,7 +30,7 @@ spec:
       containers:
         - name: flask-app
           image: REPLACE_IMAGE
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
 
           ports:
             - name: http
