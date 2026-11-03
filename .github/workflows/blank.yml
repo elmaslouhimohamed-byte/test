@@ -5,23 +5,74 @@ on:
     branches:
       - main
 
+# Permissions requises pour l'authentification OIDC (génération du jeton JWT)
 permissions:
-  id-token: write # Required for requesting the JWT from GitHub's OIDC provider
-  contents: read  # Required for actions/checkout
+  id-token: write # Requis pour demander le token JWT au fournisseur OIDC de GitHub
+  contents: read  # Requis pour permettre à actions/checkout de lire le code
 
 jobs:
-  azure-login:
+  # =========================================================================
+  # ÉTAPE 1 & 2 : SÉCURITÉ & SCAN STATIQUE (SAST IaC & DOCKERFILE)
+  # =========================================================================
+  security-and-sast:
+    name: Validation Sécurité & Checkov
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         
+      # Étape 1 : Secret Scanning (Géré automatiquement en tâche de fond par GHAS)
+
+      # Étape 2 : Analyse SAST avec Checkov (Scan du code Terraform et du Dockerfile)
       - name: Scan de Sécurité avec Checkov
         uses: bridgecrewio/checkov-action@master
         with:
-          framework: terraform
-          soft_fail: false # 'false' pour bloquer le pipeline si une faille est trouvée
-      
+          framework: all # Analyse Terraform, Dockerfile, et Kubernetes si présents
+          soft_fail: false # Bloque le pipeline si une faille de sécurité est trouvée
+
+  # =========================================================================
+  # ÉTAPE 3 : CONSTRUCTION, SCAN DE L'IMAGE & APPROBATION MANUELLE
+  # =========================================================================
+  build-and-scan-image:
+    name: Build & Scan Image Container
+    runs-on: ubuntu-latest
+    needs: security-and-sast # S'exécute uniquement si le code source est validé par Checkov
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Construction locale de l'image Docker (sans la pousser)
+      - name: Build Local Docker Image
+        run: |
+          docker build -t my-app-image:${{ github.sha }} .
+
+      # Analyse des vulnérabilités de l'image finale avec Trivy
+      - name: Run Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'my-app-image:${{ github.sha }}'
+          format: 'table'
+          exit-code: '1' # Bloque le pipeline si des vulnérabilités graves sont détectées
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+  # =========================================================================
+  # ÉTAPE 4 : APPROBATION, AUTHENTIFICATION OIDC & DÉPLOIEMENT AZURE
+  # =========================================================================
+  deploy-to-production:
+    name: Approbation & Déploiement Azure
+    runs-on: ubuntu-latest
+    needs: build-and-scan-image # Attend impérativement que Trivy soit vert
+    
+    # Déclenche le blocage et l'approbation manuelle (Entra ID + MFA requis)
+    environment: production
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Connexion dynamique à Azure via Entra ID sans clés secrètes fixes
       - name: Authenticate via Azure Entra ID OIDC
         uses: azure/login@v2
         with:
@@ -29,18 +80,12 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      # Exécution sécurisée de vos commandes d'infrastructure
       - name: Run Azure CLI commands safely
         run: |
           az account show
           az group list --output table
-  deploy-to-production:
-    runs-on: ubuntu-latest
-    needs: azure-login # Attend que le build réussisse
-    
-    # C'est cette ligne qui déclenche le blocage et l'approbation manuelle
-    environment: production
-    
-    steps:
-      - uses: actions/checkout@v4
+
       - name: Deploying to Production Server
-        run: echo "Deploying code live!"
+        run: |
+          echo "Déploiement en production amorcé avec succès via le jeton OIDC !"
