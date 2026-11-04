@@ -15,16 +15,22 @@ env:
   AKS_CLUSTER_NAME: aks-devsecops
 
 jobs:
+
+  # ==========================================
+  # JOB 1: TESTS AND SECURITY VALIDATION
+  # ==========================================
   validate:
     name: Tests and Security Scans
     runs-on: ubuntu-latest
+
     permissions:
       contents: read
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
@@ -43,37 +49,40 @@ jobs:
           directory: .
           framework: terraform
           soft_fail: false
-         
-      #- name: Checkov - Kubernetes
-      #  uses: bridgecrewio/checkov-action@v12
-      #  with:
-      #    directory: ./k8s
-      #    framework: kubernetes
-      #   soft_fail: false
 
-      #- name: Checkov - Dockerfile
-      #  uses: bridgecrewio/checkov-action@v12
-      #  with:
-      #    file: ./Dockerfile
-      #    framework: dockerfile
-      #    soft_fail: false
+      # Enable when ready:
+      # - name: Checkov - Dockerfile
+      #   uses: bridgecrewio/checkov-action@v12
+      #   with:
+      #     file: ./Dockerfile
+      #     framework: dockerfile
+      #     soft_fail: false
 
-  build:
+
+  # ==========================================
+  # JOB 2: BUILD + SCAN + EXPORT IMAGE
+  # ==========================================
+  build-and-scan:
     name: Build and Scan Docker Image
     needs: validate
+
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
     runs-on: ubuntu-latest
+
     permissions:
       contents: read
 
     steps:
       - uses: actions/checkout@v4
 
+      # Build Docker image ONCE
       - name: Build Docker image
         run: |
           docker build \
             -t $ACR_LOGIN_SERVER/$IMAGE_NAME:$GITHUB_SHA .
 
+      # Scan the exact local image
       - name: Scan Docker image with Trivy
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
@@ -84,11 +93,34 @@ jobs:
           vuln-type: os,library
           severity: CRITICAL,HIGH
 
+      # Export the scanned image
+      - name: Export Docker image
+        run: |
+          docker save \
+            $ACR_LOGIN_SERVER/$IMAGE_NAME:$GITHUB_SHA \
+            -o flask-image.tar
+
+      # Temporarily transfer image to the next job
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flask-image-${{ github.sha }}
+          path: flask-image.tar
+          retention-days: 1
+          if-no-files-found: error
+
+
+  # ==========================================
+  # JOB 3: APPROVAL + PUSH + DEPLOY
+  # ==========================================
   publish-and-deploy:
     name: Approve, Push and Deploy Production
-    needs: build
+
+    needs: build-and-scan
+
     runs-on: ubuntu-latest
 
+    # Approval happens BEFORE this job starts
     environment:
       name: production
 
@@ -99,6 +131,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Retrieve the exact image scanned in Job 2
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: flask-image-${{ github.sha }}
+
+      # Load image into the new runner
+      - name: Load Docker image
+        run: |
+          docker load -i flask-image.tar
+
+      # Azure authentication using OIDC
       - name: Login to Azure
         uses: azure/login@v2
         with:
@@ -106,16 +150,38 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      # Login to Azure Container Registry
       - name: Login to ACR
         run: az acr login --name $ACR_NAME
 
+      # Push the SAME image that passed Trivy
       - name: Push Docker image to ACR
         run: |
-          docker build \
-            -t $ACR_LOGIN_SERVER/$IMAGE_NAME:$GITHUB_SHA .
           docker push \
             $ACR_LOGIN_SERVER/$IMAGE_NAME:$GITHUB_SHA
 
+      # Retrieve immutable image digest
+      - name: Get image digest
+        id: get-digest
+        run: |
+          DIGEST=$(az acr repository show \
+            --name "$ACR_NAME" \
+            --image "$IMAGE_NAME:$GITHUB_SHA" \
+            --query digest \
+            --output tsv)
+
+          if [ -z "$DIGEST" ]; then
+            echo "ERROR: Image digest not found"
+            exit 1
+          fi
+
+          IMAGE_REF="$ACR_LOGIN_SERVER/$IMAGE_NAME@$DIGEST"
+
+          echo "IMAGE_REF=$IMAGE_REF" >> "$GITHUB_ENV"
+
+          echo "Image to deploy: $IMAGE_REF"
+
+      # Connect to AKS
       - name: Connect to AKS
         uses: azure/aks-set-context@v4
         with:
@@ -124,18 +190,20 @@ jobs:
           admin: 'false'
           use-kubelogin: 'true'
 
+      # Deploy exact image digest
       - name: Deploy to production
         run: |
-          IMAGE="$ACR_LOGIN_SERVER/$IMAGE_NAME:$GITHUB_SHA"
-
           kubectl apply -f k8s/namespace.yaml
 
-          sed "s|REPLACE_IMAGE|$IMAGE|g" \
-            k8s/deployment.yaml | kubectl apply -f -
+          sed "s|REPLACE_IMAGE|$IMAGE_REF|g" \
+            k8s/deployment.yaml > /tmp/deployment.yaml
+
+          kubectl apply -f /tmp/deployment.yaml
 
           kubectl apply -f k8s/service.yaml
           kubectl apply -f k8s/network-policy.yaml
 
+      # Verify deployment
       - name: Verify deployment
         run: |
           kubectl rollout status deployment/flask-app \
