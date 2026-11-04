@@ -11,7 +11,7 @@ env:
   ACR_NAME: acrdevsecops2026
   ACR_LOGIN_SERVER: acrdevsecops2026.azurecr.io
   IMAGE_NAME: flask-app
-  AKS_RESOURCE_GROUP: rg-terraform-infrastructure
+  AKS_RESOURCE_GROUP: rg_days
   AKS_CLUSTER_NAME: aks-devsecops
 
 jobs:
