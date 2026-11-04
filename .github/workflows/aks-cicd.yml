@@ -185,7 +185,7 @@ jobs:
       - name: Install kubelogin
         uses: Azure/use-kubelogin@v1
         with:
-          kubelogin-version: 'latest'
+          kubelogin-version: 'v0.2.12'
 
       # Connect to AKS
       - name: Connect to AKS
