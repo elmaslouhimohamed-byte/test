@@ -181,6 +181,12 @@ jobs:
 
           echo "Image to deploy: $IMAGE_REF"
 
+      # Install kubelogin
+      - name: Install kubelogin
+        uses: Azure/use-kubelogin@v1
+        with:
+          kubelogin-version: 'latest'
+
       # Connect to AKS
       - name: Connect to AKS
         uses: azure/aks-set-context@v4
